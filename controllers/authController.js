@@ -621,13 +621,11 @@ exports.updateProfileImage = asyncHandler(async (req, res) => {
   }
 
   try {
-    // رفع الصورة الجديدة إلى Google Cloud Storage
-    const imageUrl = await cloudStorageService.uploadImage(req.file);
+    // تحويل الصورة إلى base64 وحفظها مباشرة
+    const base64Image = req.file.buffer.toString('base64');
+    const imageDataUrl = `data:${req.file.mimetype};base64,${base64Image}`;
     
-    // تجاهل عملية حذف الصورة القديمة لتفادي مشكلة الصلاحيات
-    // وتحديث رابط الصورة في بيانات المستخدم مباشرة
-    
-    user.profileImage = imageUrl;
+    user.profileImage = imageDataUrl;
     await user.save();
 
     res.status(200).json({
