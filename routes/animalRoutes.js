@@ -32,7 +32,7 @@ router.route('/:id')
   .delete(deleteAnimal);
 
 router.route('/:id/photo')
-  .put(protect, upload.single('file'), uploadAnimalPhoto);
+ .put(upload.single('file'), uploadAnimalPhoto);
 
 router.route('/:id/vaccinations')
   .get(getAnimalVaccinations);

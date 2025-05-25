@@ -136,6 +136,20 @@ exports.createAnimal = asyncHandler(async (req, res) => {
       req.body.status = 'slaughtered';
     }
 
+    // التحقق من وجود حيوان بنفس المعرف للمستخدم نفسه
+    const existingAnimal = await Animal.findOne({
+      identificationNumber: req.body.identificationNumber,
+      userId: req.user.id
+    });
+
+    if (existingAnimal) {
+      return res.status(400).json({
+        success: false,
+        message: `معرف الحيوان "${req.body.identificationNumber}" مستخدم بالفعل. يرجى اختيار معرف آخر.`,
+        errorType: 'DUPLICATE_ID'
+      });
+    }
+
     // التعامل مع حالة عدم وجود categoryId
     if (!req.body.categoryId && req.body.category) {
       // البحث عن الفئة بالاسم
@@ -213,18 +227,54 @@ exports.createAnimal = asyncHandler(async (req, res) => {
     if (req.body.birthDate && req.body.acquisitionMethod === 'birth') {
       await createVaccinationScheduleForAnimal(animal);
     }
- res.status(201).json({
+
+    res.status(201).json({
       success: true,
       data: animal
     });
   } catch (error) {
     console.error('Error creating animal:', error);
-    res.status(400).json({
+    
+    // معالجة خاصة لأخطاء MongoDB المكررة
+    if (error.code === 11000) {
+      // استخراج اسم الحقل المكرر
+      const duplicateField = Object.keys(error.keyPattern || {})[0];
+      
+      if (duplicateField === 'identificationNumber') {
+        return res.status(400).json({
+          success: false,
+          message: `معرف الحيوان "${req.body.identificationNumber}" مستخدم بالفعل. يرجى اختيار معرف آخر.`,
+          errorType: 'DUPLICATE_ID'
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'البيانات مكررة. يرجى التحقق من المدخلات.',
+          errorType: 'DUPLICATE_DATA'
+        });
+      }
+    }
+    
+    // معالجة أخطاء التحقق
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: errors.join(', '),
+        errorType: 'VALIDATION_ERROR'
+      });
+    }
+    
+    // خطأ عام
+    res.status(500).json({
       success: false,
-      message: error.message
+      message: 'حدث خطأ غير متوقع أثناء إضافة الحيوان',
+      errorType: 'INTERNAL_ERROR'
     });
   }
 });
+
+
 
 // @desc    تحديث حيوان
 // @route   PUT /api/animals/:id
@@ -602,26 +652,152 @@ exports.getAnimalBreedingEvents = asyncHandler(async (req, res) => {
 // @desc    تحديث حالة الحظر للحيوان
 // @route   PUT /api/animals/:id/restriction
 // @access  Private
-exports.updateAnimalRestriction = asyncHandler(async (req, res) => {
-  const animal = await Animal.findOne({
-    _id: req.params.id,
-    userId: req.user.id
-  });
+exports.updateAnimal = asyncHandler(async (req, res) => {
+  try {
+    console.log('Updating animal with data:', req.body);
+    
+    // تخزين القيم القديمة للصنف والسلالة
+    let animal = await Animal.findOne({
+      _id: req.params.id,
+      userId: req.user.id
+    });
 
-  if (!animal) {
-    return res.status(404).json({
+    if (!animal) {
+      return res.status(404).json({
+        success: false,
+        message: 'الحيوان غير موجود'
+      });
+    }
+
+    // التحقق من عدم تكرار المعرف (إذا تم تغييره)
+    if (req.body.identificationNumber && req.body.identificationNumber !== animal.identificationNumber) {
+      const existingAnimal = await Animal.findOne({
+        identificationNumber: req.body.identificationNumber,
+        userId: req.user.id,
+        _id: { $ne: req.params.id } // استبعاد الحيوان الحالي
+      });
+
+      if (existingAnimal) {
+        return res.status(400).json({
+          success: false,
+          message: `معرف الحيوان "${req.body.identificationNumber}" مستخدم بالفعل. يرجى اختيار معرف آخر.`,
+          errorType: 'DUPLICATE_ID'
+        });
+      }
+    }
+
+    const oldCategoryId = animal.categoryId;
+    const oldBreedId = animal.breedId;
+    
+    // التحقق من وجود وزن جديد
+    if (req.body.weight && req.body.weight.currentWeight && req.body.weight.currentWeight !== animal.weight?.currentWeight) {
+      if (!animal.weight) {
+        animal.weight = { weightHistory: [] };
+      }
+      if (!animal.weight.weightHistory) {
+        animal.weight.weightHistory = [];
+      }
+      
+      // إضافة الوزن الجديد إلى سجل الأوزان
+      animal.weight.weightHistory.push({
+        weight: req.body.weight.currentWeight,
+        date: new Date()
+      });
+    }
+    
+    // معالجة الصنف والسلالة
+    if (req.body.category && !req.body.categoryId) {
+      // البحث عن categoryId بناءً على الاسم
+      const category = await AnimalCategory.findOne({
+        name: req.body.category,
+        userId: req.user.id
+      });
+      
+      if (category) {
+        req.body.categoryId = category._id;
+      } else {
+        // إنشاء فئة جديدة
+        const newCategory = await AnimalCategory.create({
+          name: req.body.category,
+          userId: req.user.id
+        });
+        req.body.categoryId = newCategory._id;
+      }
+    }
+    
+    // التعامل مع الحالة حيث يتم إرسال breed بدلاً من breedId
+    if (req.body.breed && !req.body.breedId) {
+      // البحث عن breedId بناءً على الاسم والفئة
+      const breed = await AnimalBreed.findOne({
+        name: req.body.breed,
+        categoryId: req.body.categoryId || animal.categoryId,
+        userId: req.user.id
+      });
+      
+      if (breed) {
+        req.body.breedId = breed._id;
+      } else if (req.body.categoryId || animal.categoryId) {
+        // إنشاء سلالة جديدة
+        const newBreed = await AnimalBreed.create({
+          name: req.body.breed,
+          categoryId: req.body.categoryId || animal.categoryId,
+          userId: req.user.id
+        });
+        req.body.breedId = newBreed._id;
+      }
+    }
+
+    // تحديث الحيوان
+    const updateData = { ...req.body };
+    
+    // تحديث الحيوان بشكل صريح
+    animal = await Animal.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+      runValidators: true
+    })
+    .populate('categoryId', 'name')
+    .populate('breedId', 'name')
+    .populate('motherId', 'identificationNumber')
+    .populate('fatherId', 'identificationNumber');
+
+    console.log('Updated animal:', animal);
+
+    res.status(200).json({
+      success: true,
+      data: animal
+    });
+  } catch (error) {
+    console.error('Error updating animal:', error);
+    
+    // معالجة خاصة لأخطاء MongoDB المكررة
+    if (error.code === 11000) {
+      const duplicateField = Object.keys(error.keyPattern || {})[0];
+      
+      if (duplicateField === 'identificationNumber') {
+        return res.status(400).json({
+          success: false,
+          message: `معرف الحيوان "${req.body.identificationNumber}" مستخدم بالفعل. يرجى اختيار معرف آخر.`,
+          errorType: 'DUPLICATE_ID'
+        });
+      }
+    }
+    
+    // معالجة أخطاء التحقق
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: errors.join(', '),
+        errorType: 'VALIDATION_ERROR'
+      });
+    }
+    
+    res.status(500).json({
       success: false,
-      message: 'الحيوان غير موجود'
+      message: 'حدث خطأ أثناء تحديث الحيوان',
+      errorType: 'INTERNAL_ERROR'
     });
   }
-
-  animal.restriction = req.body;
-  await animal.save();
-
-  res.status(200).json({
-    success: true,
-    data: animal
-  });
 });
 
 // @desc    الحصول على نسب الحيوان
@@ -751,3 +927,29 @@ const buildPedigreeTree = async (animalId, depth = 2) => {
 
   return nodeData;
 };
+
+
+// @desc    تحديث حالة الحظر للحيوان
+// @route   PUT /api/animals/:id/restriction
+// @access  Private
+exports.updateAnimalRestriction = asyncHandler(async (req, res) => {
+  const animal = await Animal.findOne({
+    _id: req.params.id,
+    userId: req.user.id
+  });
+
+  if (!animal) {
+    return res.status(404).json({
+      success: false,
+      message: 'الحيوان غير موجود'
+    });
+  }
+
+  animal.restriction = req.body;
+  await animal.save();
+
+  res.status(200).json({
+    success: true,
+    data: animal
+  });
+});
