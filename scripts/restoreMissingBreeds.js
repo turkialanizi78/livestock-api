@@ -6,7 +6,7 @@ const AnimalBreed = require('../models/AnimalBreed');
 // الاتصال بقاعدة البيانات
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://camycamat:camycamat@cluster0.87wisux.mongodb.net/livestock-google-storage', {
+    await mongoose.connect(process.env.MONGODB_URI , {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
