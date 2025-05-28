@@ -456,8 +456,6 @@ exports.deleteAnimal = asyncHandler(async (req, res) => {
 // @access  Private
 exports.uploadAnimalPhoto = asyncHandler(async (req, res) => {
   try {
- 
-    
     const animal = await Animal.findOne({
       _id: req.params.id,
       userId: req.user.id
@@ -477,14 +475,14 @@ exports.uploadAnimalPhoto = asyncHandler(async (req, res) => {
       });
     }
 
-    // حفظ الصورة في قاعدة البيانات
-    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/animal-images/${req.file.filename}`;
+    // رفع الصورة إلى Google Cloud Storage
+    const imageUrl = await cloudStorage.uploadImage(req.file, 'animal-images');
     
     // إضافة رابط الصورة إلى مصفوفة صور الحيوان
     if (!animal.images) {
       animal.images = [];
     }
-    animal.images.push(fileUrl);
+    animal.images.push(imageUrl);
     await animal.save();
 
     res.status(200).json({

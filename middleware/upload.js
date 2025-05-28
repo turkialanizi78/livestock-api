@@ -2,15 +2,8 @@
 const multer = require('multer');
 const path = require('path');
 
-// تخزين الملفات في مجلد uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/animal-images/');
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname);
-  }
-});
+// استخدام memory storage للرفع إلى Google Cloud
+const storage = multer.memoryStorage();
 
 // فلتر للتأكد من أن الملف هو صورة
 const fileFilter = (req, file, cb) => {
