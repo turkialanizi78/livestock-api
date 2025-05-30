@@ -26,10 +26,42 @@ const BirthSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  birthType: {
+    type: String,
+    enum: ['natural', 'assisted', 'cesarean'],
+    default: 'natural'
+  },
+  assistanceRequired: {
+    type: Boolean,
+    default: false
+  },
+  veterinarianName: {
+    type: String,
+    trim: true
+  },
   complications: {
     type: String,
     trim: true
   },
+  offspringDetails: [{
+    gender: {
+      type: String,
+      enum: ['male', 'female']
+    },
+    weight: Number,
+    tagNumber: String,
+    outcome: {
+      type: String,
+      enum: ['alive', 'stillborn'],
+      default: 'alive'
+    },
+    healthStatus: {
+      type: String,
+      enum: ['healthy', 'weak', 'sick'],
+      default: 'healthy'
+    },
+    markings: String
+  }],
   offspringRegistered: {
     type: Boolean,
     default: false

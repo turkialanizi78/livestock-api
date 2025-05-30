@@ -37,8 +37,20 @@ exports.getBirths = asyncHandler(async (req, res) => {
   }
 
   const births = await Birth.find(query)
-    .populate('femaleId', 'identificationNumber')
-    .populate('breedingEventId')
+    .populate('femaleId', 'identificationNumber name tagNumber')
+    .populate({
+      path: 'breedingEventId',
+      populate: [
+        {
+          path: 'maleId',
+          select: 'identificationNumber name tagNumber'
+        },
+        {
+          path: 'femaleId',
+          select: 'identificationNumber name tagNumber'
+        }
+      ]
+    })
     .sort({ birthDate: -1 });
 
   res.status(200).json({
@@ -52,13 +64,27 @@ exports.getBirths = asyncHandler(async (req, res) => {
 // @route   GET /api/births/:id
 // @access  Private
 exports.getBirth = asyncHandler(async (req, res) => {
+  console.log('Getting birth with ID:', req.params.id);
+  
   const birth = await Birth.findOne({
     _id: req.params.id,
     userId: req.user.id
   })
-    .populate('femaleId', 'identificationNumber')
-    .populate('breedingEventId')
-    .populate('offspringIds', 'identificationNumber gender');
+    .populate('femaleId', 'identificationNumber name tagNumber')
+    .populate({
+      path: 'breedingEventId',
+      populate: [
+        {
+          path: 'maleId',
+          select: 'identificationNumber name tagNumber'
+        },
+        {
+          path: 'femaleId',
+          select: 'identificationNumber name tagNumber'
+        }
+      ]
+    })
+    .populate('offspringIds', 'identificationNumber gender name tagNumber');
 
   if (!birth) {
     return res.status(404).json({
@@ -66,6 +92,9 @@ exports.getBirth = asyncHandler(async (req, res) => {
       message: 'الولادة غير موجودة'
     });
   }
+
+  console.log('Birth data with populated fields:', JSON.stringify(birth, null, 2));
+  console.log('BreedingEventId maleId:', birth.breedingEventId?.maleId);
 
   res.status(200).json({
     success: true,
@@ -89,6 +118,18 @@ exports.updateBirth = asyncHandler(async (req, res) => {
     });
   }
 
+  // التحقق من صحة التاريخ إذا تم تحديثه
+  if (req.body.birthDate) {
+    const birthDate = new Date(req.body.birthDate);
+    if (isNaN(birthDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'تاريخ الولادة غير صالح'
+      });
+    }
+    req.body.birthDate = birthDate;
+  }
+  
   birth = await Birth.findByIdAndUpdate(req.params.id, req.body, {
     new: true,
     runValidators: true
@@ -132,7 +173,7 @@ exports.deleteBirth = asyncHandler(async (req, res) => {
     });
   }
 
-  await birth.remove();
+  await Birth.deleteOne({ _id: req.params.id });
 
   res.status(200).json({
     success: true,
@@ -250,6 +291,18 @@ exports.createBirth = asyncHandler(async (req, res) => {
     });
   }
 
+  // التحقق من صحة التاريخ
+  if (req.body.birthDate) {
+    const birthDate = new Date(req.body.birthDate);
+    if (isNaN(birthDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'تاريخ الولادة غير صالح'
+      });
+    }
+    req.body.birthDate = birthDate;
+  }
+  
   // إنشاء سجل الولادة
   const birth = await Birth.create({
     ...req.body,
