@@ -87,7 +87,7 @@ exports.createBreedingEvent = asyncHandler(async (req, res) => {
   const female = await Animal.findOne({
     _id: req.body.femaleId,
     userId: req.user.id,
-    gender: 'female'
+    gender: { $in: ['female', 'أنثى'] }
   });
 
   if (!female) {
@@ -102,7 +102,7 @@ exports.createBreedingEvent = asyncHandler(async (req, res) => {
     const male = await Animal.findOne({
       _id: req.body.maleId,
       userId: req.user.id,
-      gender: 'male'
+      gender: { $in: ['male', 'ذكر'] }
     });
 
     if (!male) {

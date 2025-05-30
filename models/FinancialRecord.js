@@ -13,7 +13,13 @@ const FinancialRecordSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['feed', 'medication', 'vaccination', 'sale', 'purchase', 'other'],
+    enum: [
+      // Income categories
+      'sale', 'milk', 'breeding_income', 'other_income',
+      // Expense categories
+      'feed', 'medical', 'medication', 'vaccination', 'labor', 
+      'equipment', 'purchase', 'maintenance', 'utilities', 'other'
+    ],
     required: true
   },
   amount: {

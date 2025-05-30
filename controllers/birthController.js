@@ -224,3 +224,154 @@ exports.registerOffspring = asyncHandler(async (req, res) => {
     data: birth
   });
 });
+
+// @desc    إنشاء ولادة جديدة
+// @route   POST /api/births
+// @access  Private
+exports.createBirth = asyncHandler(async (req, res) => {
+  // التحقق من وجود حدث التكاثر
+  const breedingEvent = await BreedingEvent.findOne({
+    _id: req.body.breedingEventId,
+    userId: req.user.id
+  });
+
+  if (!breedingEvent) {
+    return res.status(404).json({
+      success: false,
+      message: 'حدث التكاثر غير موجود'
+    });
+  }
+
+  // التحقق من أن الحدث لم يتم تسجيل ولادة له بالفعل
+  if (breedingEvent.birthRecorded) {
+    return res.status(400).json({
+      success: false,
+      message: 'تم تسجيل ولادة لهذا الحدث بالفعل'
+    });
+  }
+
+  // إنشاء سجل الولادة
+  const birth = await Birth.create({
+    ...req.body,
+    femaleId: breedingEvent.femaleId,
+    userId: req.user.id
+  });
+
+  // تحديث حدث التكاثر
+  breedingEvent.birthRecorded = true;
+  breedingEvent.birthId = birth._id;
+  await breedingEvent.save();
+
+  res.status(201).json({
+    success: true,
+    data: birth
+  });
+});
+
+// @desc    الحصول على إحصائيات الولادات
+// @route   GET /api/births/statistics
+// @access  Private
+exports.getBirthStatistics = asyncHandler(async (req, res) => {
+  const { startDate, endDate } = req.query;
+  
+  let matchStage = { userId: req.user.id };
+  
+  if (startDate || endDate) {
+    matchStage.birthDate = {};
+    if (startDate) matchStage.birthDate.$gte = new Date(startDate);
+    if (endDate) matchStage.birthDate.$lte = new Date(endDate);
+  }
+
+  const statistics = await Birth.aggregate([
+    { $match: matchStage },
+    {
+      $group: {
+        _id: null,
+        totalBirths: { $sum: 1 },
+        totalLivingOffspring: { $sum: '$livingOffspringCount' },
+        totalDeadOffspring: { $sum: '$deadOffspringCount' },
+        averageLivingPerBirth: { $avg: '$livingOffspringCount' },
+        averageDeadPerBirth: { $avg: '$deadOffspringCount' },
+        birthsWithComplications: {
+          $sum: { $cond: [{ $ne: ['$complications', null] }, 1, 0] }
+        },
+        offspringRegisteredCount: {
+          $sum: { $cond: ['$offspringRegistered', 1, 0] }
+        }
+      }
+    }
+  ]);
+
+  // إحصائيات حسب الشهر
+  const monthlyStatistics = await Birth.aggregate([
+    { $match: matchStage },
+    {
+      $group: {
+        _id: {
+          year: { $year: '$birthDate' },
+          month: { $month: '$birthDate' }
+        },
+        count: { $sum: 1 },
+        livingOffspring: { $sum: '$livingOffspringCount' },
+        deadOffspring: { $sum: '$deadOffspringCount' }
+      }
+    },
+    { $sort: { '_id.year': -1, '_id.month': -1 } },
+    { $limit: 12 }
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      overall: statistics[0] || {
+        totalBirths: 0,
+        totalLivingOffspring: 0,
+        totalDeadOffspring: 0,
+        averageLivingPerBirth: 0,
+        averageDeadPerBirth: 0,
+        birthsWithComplications: 0,
+        offspringRegisteredCount: 0
+      },
+      monthly: monthlyStatistics
+    }
+  });
+});
+
+// @desc    الحصول على الولادات المتوقعة
+// @route   GET /api/births/expected
+// @access  Private
+exports.getExpectedBirths = asyncHandler(async (req, res) => {
+  const days = parseInt(req.query.days) || 30;
+  const today = new Date();
+  const futureDate = new Date();
+  futureDate.setDate(today.getDate() + days);
+
+  // البحث عن أحداث التكاثر المؤكدة والتي لم يتم تسجيل ولادة لها
+  const expectedBirths = await BreedingEvent.find({
+    userId: req.user.id,
+    eventType: 'pregnancy',
+    birthRecorded: false,
+    expectedBirthDate: {
+      $gte: today,
+      $lte: futureDate
+    }
+  })
+  .populate('femaleId', 'identificationNumber')
+  .populate('maleId', 'identificationNumber')
+  .sort({ expectedBirthDate: 1 });
+
+  // إضافة عدد الأيام المتبقية لكل ولادة متوقعة
+  const birthsWithDaysRemaining = expectedBirths.map(event => {
+    const daysRemaining = Math.ceil((event.expectedBirthDate - today) / (1000 * 60 * 60 * 24));
+    return {
+      ...event.toObject(),
+      daysRemaining
+    };
+  });
+
+  res.status(200).json({
+    success: true,
+    count: birthsWithDaysRemaining.length,
+    data: birthsWithDaysRemaining
+  });
+});

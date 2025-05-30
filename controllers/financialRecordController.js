@@ -10,11 +10,11 @@ exports.getFinancialRecords = asyncHandler(async (req, res) => {
   let query = { userId: req.user.id };
 
   // إضافة فلترة حسب الطلب
-  if (req.query.type) {
+  if (req.query.type && req.query.type !== 'all') {
     query.type = req.query.type;
   }
 
-  if (req.query.category) {
+  if (req.query.category && req.query.category !== 'null') {
     query.category = req.query.category;
   }
 
@@ -23,15 +23,34 @@ exports.getFinancialRecords = asyncHandler(async (req, res) => {
   }
 
   // فلترة حسب التاريخ
-  if (req.query.startDate || req.query.endDate) {
+  if (req.query.dateRange && req.query.dateRange !== 'null') {
+    const now = new Date();
     query.date = {};
     
-    if (req.query.startDate) {
-      query.date.$gte = new Date(req.query.startDate);
+    switch (req.query.dateRange) {
+      case 'week':
+        query.date.$gte = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        query.date.$lte = now;
+        break;
+      case 'month':
+        query.date.$gte = new Date(now.getFullYear(), now.getMonth(), 1);
+        query.date.$lte = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        break;
+      case 'year':
+        query.date.$gte = new Date(now.getFullYear(), 0, 1);
+        query.date.$lte = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+        break;
     }
+  } else if (req.query.startDate && req.query.startDate !== 'null' && req.query.endDate && req.query.endDate !== 'null') {
+    // Handle custom date range
+    const startDate = new Date(req.query.startDate);
+    const endDate = new Date(req.query.endDate);
     
-    if (req.query.endDate) {
-      query.date.$lte = new Date(req.query.endDate);
+    if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+      query.date = {
+        $gte: startDate,
+        $lte: endDate
+      };
     }
   }
 
@@ -177,7 +196,7 @@ exports.deleteFinancialRecord = asyncHandler(async (req, res) => {
     });
   }
 
-  await financialRecord.remove();
+  await financialRecord.deleteOne();
 
   res.status(200).json({
     success: true,

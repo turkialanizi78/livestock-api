@@ -17,13 +17,15 @@ router.use(protect);
 router.route('/')
   .get(getFinancialRecords)
   .post(createFinancialRecord);
+  
+ router.route('/summary')
+  .get(getFinancialSummary);
 
 router.route('/:id')
   .get(getFinancialRecord)
   .put(updateFinancialRecord)
   .delete(deleteFinancialRecord);
 
-router.route('/summary')
-  .get(getFinancialSummary);
+
 
 module.exports = router;
