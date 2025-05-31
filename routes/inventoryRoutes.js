@@ -18,6 +18,13 @@ const router = express.Router();
 
 router.use(protect);
 
+// يجب وضع المسارات الثابتة قبل المسارات الديناميكية
+router.route('/low-stock')
+  .get(getLowStockItems);
+
+router.route('/expiring')
+  .get(getExpiringItems);
+
 router.route('/')
   .get(getInventoryItems)
   .post(createInventoryItem);
@@ -35,12 +42,6 @@ router.route('/:id/use')
 
 router.route('/:id/transactions')
   .get(getItemTransactions);
-
-router.route('/low-stock')
-  .get(getLowStockItems);
-
-router.route('/expiring')
-  .get(getExpiringItems);
 
 
  

@@ -10,7 +10,10 @@ const {
   getFeedingStats,
   getFeedingByDate,
   getFeedingByAnimal,
-  bulkCreateFeedingRecords
+  bulkCreateFeedingRecords,
+  calculateFeedingCosts,
+  getFeedingHistoryByAnimal,
+  batchCreateFeedingRecords
 } = require('../controllers/feedingController');
 const { protect } = require('../middleware/auth');
 
@@ -27,17 +30,26 @@ router.route('/')
 router.route('/bulk')
   .post(bulkCreateFeedingRecords);
 
+router.route('/batch')
+  .post(batchCreateFeedingRecords);
+
 router.route('/calculate')
   .post(calculateFeedAmount);
 
 router.route('/stats')
   .get(getFeedingStats);
 
+router.route('/costs')
+  .get(calculateFeedingCosts);
+
 router.route('/by-date')
   .get(getFeedingByDate);
 
 router.route('/by-animal/:animalId')
   .get(getFeedingByAnimal);
+
+router.route('/history/animal/:animalId')
+  .get(getFeedingHistoryByAnimal);
 
 router.route('/:id')
   .get(getFeedingRecord)

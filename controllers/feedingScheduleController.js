@@ -13,8 +13,10 @@ const mongoose = require('mongoose');
 exports.getFeedingSchedules = asyncHandler(async (req, res) => {
   let query = { userId: req.user.id };
 
-  // فلترة حسب الحالة
-  if (req.query.isActive !== undefined) {
+  // فلترة حسب الحالة (دعم active و isActive)
+  if (req.query.active !== undefined) {
+    query.isActive = req.query.active === 'true';
+  } else if (req.query.isActive !== undefined) {
     query.isActive = req.query.isActive === 'true';
   }
 
@@ -280,7 +282,7 @@ exports.executeSchedule = asyncHandler(async (req, res) => {
     });
   }
 
-  const { executionTime, ruleIndex = 0, feedingTimeIndex = 0 } = req.body;
+  const { executionTime, ruleIndex = 0, feedingTimeIndex = 0, fedBy, notes, skipInventoryCheck = false } = req.body;
 
   if (!schedule.applicationRules[ruleIndex]) {
     return res.status(400).json({
@@ -367,28 +369,39 @@ exports.executeSchedule = asyncHandler(async (req, res) => {
     },
     feedingDate: executionTime ? new Date(executionTime) : new Date(),
     feedingTime: feedingTime.time,
-    fedBy: req.user.name || 'النظام التلقائي',
+    fedBy: fedBy || req.user.name || 'النظام التلقائي',
+    notes: notes || '',
     scheduledFeedingId: schedule._id,
     feedingType: 'regular',
-    userId: req.user.id
+    userId: req.user.id,
+    skipInventoryCheck: skipInventoryCheck // تمرير علامة تخطي فحص المخزون
   };
 
-  // استدعاء controller إنشاء سجل التغذية
-  req.body = feedingRecordData;
-  const result = await exports.createFeedingRecord(req, {
-    status: (statusCode) => ({
-      json: (data) => ({ statusCode, ...data })
-    })
-  });
-
-  if (result.statusCode === 201) {
+  // إنشاء سجل التغذية مباشرة
+  try {
+    const FeedingRecord = require('../models/FeedingRecord');
+    
+    // إنشاء معرف السجل
+    const dateStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const timeStr = new Date().toTimeString().split(' ')[0].replace(/:/g, '');
+    const recordId = `FEED-${dateStr}-${timeStr}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+    
+    // إنشاء سجل التغذية
+    const feedingRecord = new FeedingRecord({
+      ...feedingRecordData,
+      recordId: recordId
+    });
+    
+    const savedRecord = await feedingRecord.save();
+    
     // تحديث إحصائيات الجدولة
     schedule.stats.totalExecutions += 1;
     schedule.stats.lastExecuted = new Date();
     schedule.stats.totalAnimalsAffected += eligibleAnimals.length;
+    schedule.stats.totalFeedUsed = (schedule.stats.totalFeedUsed || 0) + totalAmount;
     
-    if (result.data && result.data.cost) {
-      const newAverageCost = ((schedule.stats.averageCost || 0) * (schedule.stats.totalExecutions - 1) + result.data.cost.totalCost) / schedule.stats.totalExecutions;
+    if (savedRecord.cost && savedRecord.cost.totalCost) {
+      const newAverageCost = ((schedule.stats.averageCost || 0) * (schedule.stats.totalExecutions - 1) + savedRecord.cost.totalCost) / schedule.stats.totalExecutions;
       schedule.stats.averageCost = newAverageCost;
     }
 
@@ -398,7 +411,7 @@ exports.executeSchedule = asyncHandler(async (req, res) => {
       success: true,
       message: 'تم تنفيذ جدولة التغذية بنجاح',
       data: {
-        feedingRecord: result.data,
+        feedingRecord: savedRecord,
         executionStats: {
           animalsAffected: eligibleAnimals.length,
           totalAmount,
@@ -407,11 +420,12 @@ exports.executeSchedule = asyncHandler(async (req, res) => {
         }
       }
     });
-  } else {
+  } catch (error) {
+    console.error('Error executing schedule:', error);
     res.status(400).json({
       success: false,
       message: 'فشل في تنفيذ جدولة التغذية',
-      error: result.message
+      error: error.message
     });
   }
 });

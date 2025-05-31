@@ -7,6 +7,7 @@ const Animal = require('../models/Animal');
 const FeedCalculationTemplate = require('../models/FeedCalculationTemplate');
 const FinancialRecord = require('../models/FinancialRecord');
 const asyncHandler = require('express-async-handler');
+const mongoose = require('mongoose');
 const { createNotification } = require('./notificationController');
 
 // @desc    الحصول على جميع سجلات التغذية
@@ -106,13 +107,68 @@ exports.createFeedingRecord = asyncHandler(async (req, res) => {
     // إضافة معرف المستخدم
     req.body.userId = req.user.id;
 
-    // التحقق من وجود العلف في المخزون
-    const feedItem = await InventoryItem.findOne({
+    // سجلات تصحيح للبحث عن العلف
+    console.log('\n=== DEBUG: البحث عن العلف ===');
+    console.log('feedType المُرسل:', req.body.feedType);
+    console.log('inventoryItemId:', req.body.feedType.inventoryItemId);
+    console.log('userId:', req.user.id);
+    
+    // التحقق من صحة معرف MongoDB
+    if (!mongoose.Types.ObjectId.isValid(req.body.feedType.inventoryItemId)) {
+      console.log('معرف العنصر غير صالح:', req.body.feedType.inventoryItemId);
+      return res.status(400).json({
+        success: false,
+        message: 'معرف العلف غير صالح'
+      });
+    }
+    
+    // إنشاء الاستعلام
+    const query = {
       _id: req.body.feedType.inventoryItemId,
-      userId: req.user.id
-    });
+      userId: req.user.id,
+      itemType: 'feed' // التأكد من أن العنصر هو علف
+    };
+    console.log('الاستعلام المُستخدم:', query);
+
+    // التحقق من وجود العلف في المخزون
+    const feedItem = await InventoryItem.findOne(query);
+    
+    console.log('نتيجة البحث:', feedItem ? 'تم العثور على العلف' : 'لم يتم العثور على العلف');
+    if (feedItem) {
+      console.log('تفاصيل العلف:', {
+        _id: feedItem._id,
+        name: feedItem.name,
+        userId: feedItem.userId,
+        itemType: feedItem.itemType,
+        category: feedItem.category
+      });
+    }
 
     if (!feedItem) {
+      // محاولة البحث بدون userId لمعرفة إن كان العنصر موجود لكن لمستخدم آخر
+      const feedItemAnyUser = await InventoryItem.findOne({
+        _id: req.body.feedType.inventoryItemId
+      });
+      
+      if (feedItemAnyUser) {
+        console.log('العنصر موجود لكن لمستخدم آخر:', {
+          itemUserId: feedItemAnyUser.userId,
+          currentUserId: req.user.id,
+          itemType: feedItemAnyUser.itemType,
+          name: feedItemAnyUser.name
+        });
+      } else {
+        console.log('العنصر غير موجود بالمرة في قاعدة البيانات');
+        
+        // محاولة البحث بـ itemType فقط لمعرفة الأعلاف المتاحة
+        const availableFeeds = await InventoryItem.find({
+          userId: req.user.id,
+          itemType: 'feed'
+        }).select('_id name');
+        
+        console.log('الأعلاف المتاحة للمستخدم:', availableFeeds);
+      }
+      
       return res.status(404).json({
         success: false,
         message: 'نوع العلف غير موجود في المخزون'
@@ -147,8 +203,18 @@ exports.createFeedingRecord = asyncHandler(async (req, res) => {
       }
     }
 
-    // إنشاء سجل التغذية
-    const feedingRecord = await FeedingRecord.create(req.body);
+    // توليد recordId يدوياً لضمان وجوده
+    const date = new Date();
+    const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+    const timeStr = date.toTimeString().slice(0, 8).replace(/:/g, '');
+    const recordId = `FEED-${dateStr}-${timeStr}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+    
+    // إنشاء سجل التغذية مع recordId
+    const feedingRecord = new FeedingRecord({
+      ...req.body,
+      recordId: recordId
+    });
+    await feedingRecord.save();
 
     // خصم الكمية من المخزون
     const inventoryTransaction = await InventoryTransaction.create({
@@ -424,7 +490,7 @@ exports.getFeedingStats = asyncHandler(async (req, res) => {
   const totalCost = await FeedingRecord.aggregate([
     {
       $match: {
-        userId: mongoose.Types.ObjectId(userId),
+        userId: new mongoose.Types.ObjectId(userId),
         feedingDate: { $gte: startDate, $lte: endDate }
       }
     },
@@ -441,7 +507,7 @@ exports.getFeedingStats = asyncHandler(async (req, res) => {
   const topFeeds = await FeedingRecord.aggregate([
     {
       $match: {
-        userId: mongoose.Types.ObjectId(userId),
+        userId: new mongoose.Types.ObjectId(userId),
         feedingDate: { $gte: startDate, $lte: endDate }
       }
     },
@@ -462,7 +528,7 @@ exports.getFeedingStats = asyncHandler(async (req, res) => {
   const dailyStats = await FeedingRecord.aggregate([
     {
       $match: {
-        userId: mongoose.Types.ObjectId(userId),
+        userId: new mongoose.Types.ObjectId(userId),
         feedingDate: { $gte: startDate, $lte: endDate }
       }
     },
@@ -634,4 +700,683 @@ exports.bulkCreateFeedingRecords = asyncHandler(async (req, res) => {
       }
     }
   });
+});
+
+// @desc    Create feeding schedule
+// @route   POST /api/feeding/schedules
+// @access  Private
+exports.createFeedingSchedule = asyncHandler(async (req, res) => {
+  try {
+    const scheduleData = {
+      ...req.body,
+      userId: req.user.id
+    };
+
+    const feedingSchedule = await FeedingSchedule.create(scheduleData);
+
+    res.status(201).json({
+      success: true,
+      message: 'تم إنشاء جدول التغذية بنجاح',
+      data: feedingSchedule
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @desc    Get all feeding schedules
+// @route   GET /api/feeding/schedules
+// @access  Private
+exports.getFeedingSchedules = asyncHandler(async (req, res) => {
+  try {
+    const { isActive, page = 1, limit = 10 } = req.query;
+
+    const query = { userId: req.user.id };
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+
+    const schedules = await FeedingSchedule
+      .find(query)
+      .populate('applicationRules.feedType.inventoryItemId', 'name unit')
+      .populate('applicationRules.animalCriteria.categoryIds', 'name')
+      .populate('applicationRules.animalCriteria.breedIds', 'name')
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await FeedingSchedule.countDocuments(query);
+
+    res.json({
+      success: true,
+      data: schedules,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @desc    Get feeding schedule by ID
+// @route   GET /api/feeding/schedules/:id
+// @access  Private
+exports.getFeedingScheduleById = asyncHandler(async (req, res) => {
+  try {
+    const schedule = await FeedingSchedule
+      .findOne({ _id: req.params.id, userId: req.user.id })
+      .populate('applicationRules.feedType.inventoryItemId')
+      .populate('applicationRules.animalCriteria.categoryIds')
+      .populate('applicationRules.animalCriteria.breedIds')
+      .populate('applicationRules.animalCriteria.specificAnimals');
+
+    if (!schedule) {
+      return res.status(404).json({
+        success: false,
+        message: 'جدول التغذية غير موجود'
+      });
+    }
+
+    // Get eligible animals for each rule
+    const rulesWithAnimals = await Promise.all(
+      schedule.applicationRules.map(async (rule, index) => {
+        const eligibleAnimals = await schedule.getEligibleAnimals(index);
+        return {
+          ...rule.toObject(),
+          eligibleAnimals: eligibleAnimals.length
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: {
+        ...schedule.toObject(),
+        applicationRules: rulesWithAnimals
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @desc    Update feeding schedule
+// @route   PUT /api/feeding/schedules/:id
+// @access  Private
+exports.updateFeedingSchedule = asyncHandler(async (req, res) => {
+  try {
+    const schedule = await FeedingSchedule.findOne({ 
+      _id: req.params.id, 
+      userId: req.user.id 
+    });
+
+    if (!schedule) {
+      return res.status(404).json({
+        success: false,
+        message: 'جدول التغذية غير موجود'
+      });
+    }
+
+    Object.assign(schedule, req.body);
+    await schedule.save();
+
+    res.json({
+      success: true,
+      message: 'تم تحديث جدول التغذية بنجاح',
+      data: schedule
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @desc    Delete feeding schedule
+// @route   DELETE /api/feeding/schedules/:id
+// @access  Private
+exports.deleteFeedingSchedule = asyncHandler(async (req, res) => {
+  try {
+    const schedule = await FeedingSchedule.findOne({ 
+      _id: req.params.id, 
+      userId: req.user.id 
+    });
+
+    if (!schedule) {
+      return res.status(404).json({
+        success: false,
+        message: 'جدول التغذية غير موجود'
+      });
+    }
+
+    await schedule.remove();
+
+    res.json({
+      success: true,
+      message: 'تم حذف جدول التغذية بنجاح'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @desc    Execute feeding schedule
+// @route   POST /api/feeding/schedules/execute
+// @access  Private
+exports.executeFeedingSchedule = asyncHandler(async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { scheduleId, feedingTime } = req.body;
+
+    const schedule = await FeedingSchedule.findOne({ 
+      _id: scheduleId, 
+      userId: req.user.id 
+    }).session(session);
+
+    if (!schedule) {
+      throw new Error('جدول التغذية غير موجود');
+    }
+
+    if (!schedule.isValidAt()) {
+      throw new Error('جدول التغذية غير نشط حالياً');
+    }
+
+    const feedingRecords = [];
+
+    // Process each rule
+    for (const [index, rule] of schedule.applicationRules.entries()) {
+      if (!rule.isActive) continue;
+
+      const eligibleAnimals = await schedule.getEligibleAnimals(index);
+      if (eligibleAnimals.length === 0) continue;
+
+      // Check inventory availability
+      const inventoryItem = await InventoryItem.findById(rule.feedType.inventoryItemId).session(session);
+      if (!inventoryItem) continue;
+
+      // Calculate total amount needed
+      let totalAmount = 0;
+      const animalsData = eligibleAnimals.map(animal => {
+        let amount = 0;
+        
+        if (rule.calculationMethod === 'percentage_of_weight' && rule.calculationParams.percentage) {
+          amount = (animal.weight?.currentWeight || 0) * rule.calculationParams.percentage / 100;
+        } else if (rule.calculationMethod === 'fixed_amount' && rule.calculationParams.fixedAmount) {
+          amount = rule.calculationParams.fixedAmount;
+        }
+
+        // Apply min/max limits
+        if (rule.calculationParams.minAmount && amount < rule.calculationParams.minAmount) {
+          amount = rule.calculationParams.minAmount;
+        }
+        if (rule.calculationParams.maxAmount && amount > rule.calculationParams.maxAmount) {
+          amount = rule.calculationParams.maxAmount;
+        }
+
+        totalAmount += amount;
+
+        return {
+          animalId: animal._id,
+          animalIdentification: animal.identificationNumber,
+          weight: animal.weight?.currentWeight,
+          calculatedAmount: amount
+        };
+      });
+
+      if (inventoryItem.availableQuantity < totalAmount) {
+        throw new Error(`الكمية المتاحة من ${inventoryItem.name} غير كافية`);
+      }
+
+      // Create feeding record
+      const feedingRecord = new FeedingRecord({
+        animals: animalsData,
+        feedType: {
+          inventoryItemId: inventoryItem._id,
+          name: inventoryItem.name,
+          unit: inventoryItem.unit
+        },
+        totalAmount,
+        calculationMethod: 'automatic',
+        calculationCriteria: {
+          percentageOfWeight: rule.calculationParams.percentage,
+          fixedAmountPerAnimal: rule.calculationParams.fixedAmount
+        },
+        feedingDate: new Date(),
+        feedingTime: feedingTime || new Date().toTimeString().slice(0, 5),
+        scheduledFeedingId: schedule._id,
+        cost: {
+          unitCost: inventoryItem.unitPrice || 0,
+          totalCost: (inventoryItem.unitPrice || 0) * totalAmount
+        },
+        feedingType: 'regular',
+        userId: req.user.id,
+        inventoryDeducted: true
+      });
+
+      await feedingRecord.save({ session });
+
+      // Create inventory transaction
+      const inventoryTransaction = new InventoryTransaction({
+        inventoryItemId: inventoryItem._id,
+        type: 'use',
+        quantity: totalAmount,
+        unitPrice: inventoryItem.unitPrice,
+        totalPrice: inventoryItem.unitPrice * totalAmount,
+        reason: 'feeding',
+        notes: `تنفيذ جدول التغذية: ${schedule.name}`,
+        userId: req.user.id
+      });
+
+      await inventoryTransaction.save({ session });
+
+      // Update feeding record with transaction ID
+      feedingRecord.inventoryTransactionId = inventoryTransaction._id;
+      await feedingRecord.save({ session });
+
+      // Update inventory
+      inventoryItem.availableQuantity -= totalAmount;
+      await inventoryItem.save({ session });
+
+      feedingRecords.push(feedingRecord);
+    }
+
+    // Update schedule statistics
+    schedule.stats.totalExecutions += 1;
+    schedule.stats.lastExecuted = new Date();
+    await schedule.save({ session });
+
+    await session.commitTransaction();
+
+    res.json({
+      success: true,
+      message: 'تم تنفيذ جدول التغذية بنجاح',
+      data: {
+        schedule: schedule.name,
+        recordsCreated: feedingRecords.length,
+        records: feedingRecords
+      }
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    session.endSession();
+  }
+});
+
+// @desc    Get active schedules for today
+// @route   GET /api/feeding/schedules/active-today
+// @access  Private
+exports.getActiveSchedulesForToday = asyncHandler(async (req, res) => {
+  try {
+    const today = new Date();
+    const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][today.getDay()];
+
+    const schedules = await FeedingSchedule.find({
+      userId: req.user.id,
+      isActive: true,
+      validFrom: { $lte: today },
+      $or: [
+        { validTo: null },
+        { validTo: { $gte: today } }
+      ]
+    }).populate('applicationRules.feedType.inventoryItemId', 'name unit');
+
+    // Filter schedules based on schedule type and applicable days
+    const activeSchedules = schedules.filter(schedule => {
+      if (schedule.scheduleType === 'daily') return true;
+      if (schedule.scheduleType === 'weekly') {
+        return schedule.applicationRules.some(rule => 
+          rule.applicableDays.includes(dayOfWeek)
+        );
+      }
+      return true;
+    });
+
+    // Add next feeding time for each schedule
+    const schedulesWithTimes = activeSchedules.map(schedule => {
+      const feedingTimes = schedule.feedingTimes
+        .filter(ft => ft.isActive)
+        .map(ft => ft.time)
+        .sort();
+
+      const currentTime = today.toTimeString().slice(0, 5);
+      const nextTime = feedingTimes.find(time => time > currentTime) || feedingTimes[0];
+
+      return {
+        ...schedule.toObject(),
+        nextFeedingTime: nextTime
+      };
+    });
+
+    res.json({
+      success: true,
+      data: schedulesWithTimes
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @desc    Calculate daily/monthly feeding costs
+// @route   GET /api/feeding/costs
+// @access  Private
+exports.calculateFeedingCosts = asyncHandler(async (req, res) => {
+  try {
+    const { period = 'month', date = new Date() } = req.query;
+    
+    const startDate = new Date(date);
+    let endDate = new Date(date);
+
+    if (period === 'day') {
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+    } else if (period === 'month') {
+      startDate.setDate(1);
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
+      endDate.setHours(23, 59, 59, 999);
+    } else if (period === 'year') {
+      startDate.setMonth(0, 1);
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(startDate.getFullYear(), 11, 31);
+      endDate.setHours(23, 59, 59, 999);
+    }
+
+    const pipeline = [
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(req.user.id),
+          feedingDate: {
+            $gte: startDate,
+            $lte: endDate
+          }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            feedType: '$feedType.name',
+            unit: '$feedType.unit'
+          },
+          totalAmount: { $sum: '$totalAmount' },
+          totalCost: { $sum: '$cost.totalCost' },
+          feedingCount: { $sum: 1 },
+          animalsCount: { $sum: { $size: '$animals' } }
+        }
+      },
+      {
+        $project: {
+          feedType: '$_id.feedType',
+          unit: '$_id.unit',
+          totalAmount: 1,
+          totalCost: 1,
+          feedingCount: 1,
+          animalsCount: 1,
+          averageCostPerUnit: { 
+            $cond: [
+              { $eq: ['$totalAmount', 0] },
+              0,
+              { $divide: ['$totalCost', '$totalAmount'] }
+            ]
+          },
+          _id: 0
+        }
+      },
+      { $sort: { totalCost: -1 } }
+    ];
+
+    const costs = await FeedingRecord.aggregate(pipeline);
+
+    const totalCost = costs.reduce((sum, item) => sum + item.totalCost, 0);
+    const totalFeedings = costs.reduce((sum, item) => sum + item.feedingCount, 0);
+
+    // Calculate daily average if period is month or year
+    let dailyAverage = 0;
+    if (period === 'month') {
+      const daysInMonth = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0).getDate();
+      dailyAverage = totalCost / daysInMonth;
+    } else if (period === 'year') {
+      dailyAverage = totalCost / 365;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        period,
+        startDate,
+        endDate,
+        costs,
+        summary: {
+          totalCost,
+          totalFeedings,
+          dailyAverage,
+          feedTypesCount: costs.length
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @desc    Get feeding history by animal
+// @route   GET /api/feeding/history/animal/:animalId
+// @access  Private
+exports.getFeedingHistoryByAnimal = asyncHandler(async (req, res) => {
+  try {
+    const { animalId } = req.params;
+    const { page = 1, limit = 10 } = req.query;
+
+    const feedingRecords = await FeedingRecord
+      .find({
+        'animals.animalId': animalId,
+        userId: req.user.id
+      })
+      .populate('feedType.inventoryItemId', 'name unit')
+      .sort({ feedingDate: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await FeedingRecord.countDocuments({
+      'animals.animalId': animalId,
+      userId: req.user.id
+    });
+
+    // Calculate consumption summary
+    const consumptionSummary = await FeedingRecord.aggregate([
+      {
+        $match: {
+          'animals.animalId': new mongoose.Types.ObjectId(animalId),
+          userId: new mongoose.Types.ObjectId(req.user.id)
+        }
+      },
+      {
+        $group: {
+          _id: '$feedType.name',
+          totalAmount: { $sum: '$totalAmount' },
+          totalCost: { $sum: '$cost.totalCost' },
+          feedingCount: { $sum: 1 },
+          unit: { $first: '$feedType.unit' }
+        }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        history: feedingRecords,
+        summary: consumptionSummary,
+        pagination: {
+          total,
+          page: parseInt(page),
+          pages: Math.ceil(total / limit)
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @desc    Batch create feeding records for multiple animals
+// @route   POST /api/feeding/batch
+// @access  Private
+exports.batchCreateFeedingRecords = asyncHandler(async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { feedingRecords } = req.body;
+
+    if (!Array.isArray(feedingRecords) || feedingRecords.length === 0) {
+      throw new Error('يجب توفير مصفوفة من سجلات التغذية');
+    }
+
+    const createdRecords = [];
+
+    for (const recordData of feedingRecords) {
+      // Validate and process each record similar to createFeedingRecord
+      const {
+        animals,
+        feedType,
+        totalAmount,
+        calculationMethod,
+        calculationCriteria,
+        feedingDate,
+        feedingTime,
+        fedBy,
+        notes,
+        cost,
+        feedingType,
+        location
+      } = recordData;
+
+      // Validate animals
+      const animalIds = animals.map(a => a.animalId);
+      const existingAnimals = await Animal.find({ 
+        _id: { $in: animalIds },
+        userId: req.user.id 
+      }).session(session);
+
+      if (existingAnimals.length !== animalIds.length) {
+        throw new Error(`بعض الحيوانات في السجل ${feedingRecords.indexOf(recordData) + 1} غير موجودة`);
+      }
+
+      // Validate inventory item
+      const inventoryItem = await InventoryItem.findOne({
+        _id: feedType.inventoryItemId,
+        userId: req.user.id,
+        itemType: 'feed'
+      }).session(session);
+
+      if (!inventoryItem) {
+        throw new Error(`نوع العلف في السجل ${feedingRecords.indexOf(recordData) + 1} غير موجود`);
+      }
+
+      // Check available quantity
+      if (inventoryItem.availableQuantity < totalAmount) {
+        throw new Error(`الكمية المتاحة من ${inventoryItem.name} غير كافية للسجل ${feedingRecords.indexOf(recordData) + 1}`);
+      }
+
+      // Create feeding record
+      const feedingRecord = new FeedingRecord({
+        animals,
+        feedType: {
+          inventoryItemId: feedType.inventoryItemId,
+          name: inventoryItem.name,
+          unit: inventoryItem.unit
+        },
+        totalAmount,
+        calculationMethod,
+        calculationCriteria,
+        feedingDate,
+        feedingTime,
+        fedBy,
+        notes,
+        cost: {
+          unitCost: cost?.unitCost || inventoryItem.unitPrice || 0,
+          totalCost: (cost?.unitCost || inventoryItem.unitPrice || 0) * totalAmount
+        },
+        feedingType,
+        location,
+        userId: req.user.id,
+        inventoryDeducted: true
+      });
+
+      await feedingRecord.save({ session });
+
+      // Create inventory transaction
+      const inventoryTransaction = new InventoryTransaction({
+        inventoryItemId: inventoryItem._id,
+        type: 'use',
+        quantity: totalAmount,
+        unitPrice: inventoryItem.unitPrice,
+        totalPrice: inventoryItem.unitPrice * totalAmount,
+        reason: 'feeding',
+        notes: `تغذية ${animals.length} حيوان - دفعة`,
+        userId: req.user.id
+      });
+
+      await inventoryTransaction.save({ session });
+
+      // Update feeding record with transaction ID
+      feedingRecord.inventoryTransactionId = inventoryTransaction._id;
+      await feedingRecord.save({ session });
+
+      // Update inventory
+      inventoryItem.availableQuantity -= totalAmount;
+      await inventoryItem.save({ session });
+
+      createdRecords.push(feedingRecord);
+    }
+
+    await session.commitTransaction();
+
+    res.status(201).json({
+      success: true,
+      message: `تم إنشاء ${createdRecords.length} سجل تغذية بنجاح`,
+      data: createdRecords
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    session.endSession();
+  }
 });

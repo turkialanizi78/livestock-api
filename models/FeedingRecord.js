@@ -118,6 +118,12 @@ const FeedingRecordSchema = new mongoose.Schema({
     required: true
   },
   
+  // علامة تجاوز فحص المخزون (مؤقتة)
+  skipInventoryCheck: {
+    type: Boolean,
+    default: false
+  },
+  
   createdAt: {
     type: Date,
     default: Date.now
@@ -139,6 +145,57 @@ FeedingRecordSchema.pre('save', function(next) {
 FeedingRecordSchema.pre('save', function(next) {
   if (this.isModified('totalAmount') || this.isModified('cost.unitCost')) {
     this.cost.totalCost = (this.cost.unitCost || 0) * (this.totalAmount || 0);
+  }
+  next();
+});
+
+// خصم الكمية من المخزون عند إنشاء سجل جديد
+FeedingRecordSchema.pre('save', async function(next) {
+  if (this.isNew && this.feedType && this.feedType.inventoryItemId && !this.skipInventoryCheck) {
+    try {
+      const InventoryItem = mongoose.model('InventoryItem');
+      const inventoryItem = await InventoryItem.findById(this.feedType.inventoryItemId);
+      
+      if (inventoryItem) {
+        if (inventoryItem.quantity >= this.totalAmount) {
+          inventoryItem.quantity -= this.totalAmount;
+          await inventoryItem.save();
+          
+          // حفظ تكلفة الوحدة
+          this.cost.unitCost = inventoryItem.unitCost || 0;
+          this.cost.totalCost = this.cost.unitCost * this.totalAmount;
+        } else {
+          return next(new Error(`الكمية المطلوبة (${this.totalAmount}) أكبر من المخزون المتاح (${inventoryItem.quantity})`));
+        }
+      } else {
+        // إذا لم يوجد عنصر المخزون، احسب التكلفة افتراضياً
+        this.cost.unitCost = this.cost.unitCost || 0;
+        this.cost.totalCost = this.cost.unitCost * this.totalAmount;
+      }
+    } catch (error) {
+      return next(error);
+    }
+  } else if (this.isNew) {
+    // إذا كان تخطي فحص المخزون، احسب التكلفة فقط
+    this.cost.totalCost = (this.cost.unitCost || 0) * this.totalAmount;
+  }
+  next();
+});
+
+// إرجاع الكمية إلى المخزون عند حذف السجل
+FeedingRecordSchema.pre('remove', async function(next) {
+  if (this.feedType && this.feedType.inventoryItemId) {
+    try {
+      const InventoryItem = mongoose.model('InventoryItem');
+      const inventoryItem = await InventoryItem.findById(this.feedType.inventoryItemId);
+      
+      if (inventoryItem) {
+        inventoryItem.quantity += this.totalAmount;
+        await inventoryItem.save();
+      }
+    } catch (error) {
+      return next(error);
+    }
   }
   next();
 });

@@ -75,6 +75,50 @@ app.get('/api/test', (req, res) => {
   res.json({ success: true, message: 'الاتصال ناجح' });
 });
 
+// مسار debug لفحص جداول التغذية
+app.get('/api/debug/feeding-schedules', async (req, res) => {
+  try {
+    const FeedingSchedule = require('./models/FeedingSchedule');
+    const allSchedules = await FeedingSchedule.find({});
+    const activeSchedules = await FeedingSchedule.find({ isActive: true });
+    
+    // فحص جداول المستخدم إذا تم توفير userId
+    let userSchedules = [];
+    if (req.query.userId) {
+      userSchedules = await FeedingSchedule.find({ userId: req.query.userId });
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        totalSchedules: allSchedules.length,
+        activeSchedules: activeSchedules.length,
+        userSchedules: userSchedules.length,
+        schedules: allSchedules.map(s => ({
+          id: s._id,
+          name: s.name,
+          userId: s.userId,
+          isActive: s.isActive,
+          scheduleType: s.scheduleType,
+          createdAt: s.createdAt
+        })),
+        userScheduleDetails: userSchedules.map(s => ({
+          id: s._id,
+          name: s.name,
+          isActive: s.isActive,
+          feedingTimes: s.feedingTimes,
+          applicationRules: s.applicationRules.length
+        }))
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // إعداد مجلد statc للملفات المرفوعة
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const uploadDir = path.join(__dirname, 'uploads/animal-images');
@@ -106,8 +150,12 @@ app.use('/api/feeding', require('./routes/feedingRoutes'));
 app.use('/api/feeding-schedules', require('./routes/feedingScheduleRoutes'));
 app.use('/api/equipment-usage', require('./routes/equipmentUsageRoutes'));
 app.use('/api/feed-calculation', require('./routes/feedCalculationRoutes'));
+app.use('/api/weight-records', require('./routes/weightRecordRoutes'));
 // app.use('/api/feeding-reports', require('./routes/feedingReportsRoutes'));
 const initializeDefaultData = require('./utils/initDefaultData');
+
+// مسار اختباري للتحقق من المخزون
+app.use('/api/test-inventory', require('./routes/testInventoryRoutes'));
 
 // مسار الصفحة الرئيسية
 app.get('/', (req, res) => {

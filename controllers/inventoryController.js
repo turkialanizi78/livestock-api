@@ -12,8 +12,11 @@ exports.getInventoryItems = asyncHandler(async (req, res) => {
   let query = { userId: req.user.id };
 
   // إضافة فلترة حسب الطلب
+  // دعم كل من 'itemType' و 'category' للتوافق مع الفرونت إند
   if (req.query.itemType) {
     query.itemType = req.query.itemType;
+  } else if (req.query.category) {
+    query.itemType = req.query.category;
   }
 
   if (req.query.isLowStock) {

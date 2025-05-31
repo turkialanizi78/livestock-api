@@ -31,7 +31,12 @@ exports.getAnimals = asyncHandler(async (req, res) => {
   }
 
   if (req.query.status) {
-    query.status = req.query.status;
+    // معالجة التوافق: تحويل 'active' إلى 'alive' للتوافق مع البيانات الموجودة
+    if (req.query.status === 'active') {
+      query.status = 'alive';
+    } else {
+      query.status = req.query.status;
+    }
   }
 
   if (req.query.isRestricted) {
@@ -126,7 +131,7 @@ exports.createAnimal = asyncHandler(async (req, res) => {
     }
     
     // ترجمة الحالة من العربية إلى الإنجليزية إذا لزم الأمر
-    if (req.body.status === 'نشط') {
+    if (req.body.status === 'نشط' || req.body.status === 'active') {
       req.body.status = 'alive';
     } else if (req.body.status === 'مباع') {
       req.body.status = 'sold';

@@ -41,6 +41,14 @@ const AnimalSchema = new mongoose.Schema({
       date: { type: Date, default: Date.now }
     }]
   },
+  // حقول جديدة لنظام تتبع الوزن
+  currentWeight: {
+    type: Number,
+    default: 0
+  },
+  lastWeightDate: {
+    type: Date
+  },
   images: [{
     type: String
   }],
@@ -66,7 +74,7 @@ const AnimalSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['alive', 'sold', 'dead', 'slaughtered'],
+    enum: ['active', 'alive', 'sold', 'dead', 'slaughtered'],
     default: 'alive'
   },
   chipId: {
